@@ -181,14 +181,18 @@ class ValidationPipeline(DiffusionPipeline):
     def _execution_device(self):
         if self.device != torch.device("meta") or not hasattr(self.unet, "_hf_hook"):
             return self.device
-        for module in self.unet.modules():
-            if (
-                hasattr(module, "_hf_hook")
-                and hasattr(module._hf_hook, "execution_device")
-                and module._hf_hook.execution_device is not None
-            ):
-                return torch.device(module._hf_hook.execution_device)
-        return self.device
+        return next(
+            (
+                torch.device(module._hf_hook.execution_device)
+                for module in self.unet.modules()
+                if (
+                    hasattr(module, "_hf_hook")
+                    and hasattr(module._hf_hook, "execution_device")
+                    and module._hf_hook.execution_device is not None
+                )
+            ),
+            self.device,
+        )
 
     def _encode_prompt(self, prompt, device, num_videos_per_prompt, do_classifier_free_guidance, negative_prompt):
         batch_size = len(prompt) if isinstance(prompt, list) else 1
@@ -283,10 +287,10 @@ class ValidationPipeline(DiffusionPipeline):
         video_length = latents.shape[2]
         latents = 1 / 0.18215 * latents
         latents = rearrange(latents, "b c f h w -> (b f) c h w")
-        # video = self.vae.decode(latents).sample
-        video = []
-        for frame_idx in tqdm(range(latents.shape[0])):
-            video.append(self.vae.decode(latents[frame_idx:frame_idx+1]).sample)
+        video = [
+            self.vae.decode(latents[frame_idx : frame_idx + 1]).sample
+            for frame_idx in tqdm(range(latents.shape[0]))
+        ]
         video = torch.cat(video)
         video = rearrange(video, "(b f) c h w -> b c f h w", f=video_length)
         video = (video / 2 + 0.5).clamp(0, 1)
@@ -318,8 +322,10 @@ class ValidationPipeline(DiffusionPipeline):
         if height % 8 != 0 or width % 8 != 0:
             raise ValueError(f"`height` and `width` have to be divisible by 8 but are {height} and {width}.")
 
-        if (callback_steps is None) or (
-            callback_steps is not None and (not isinstance(callback_steps, int) or callback_steps <= 0)
+        if (
+            callback_steps is None
+            or not isinstance(callback_steps, int)
+            or callback_steps <= 0
         ):
             raise ValueError(
                 f"`callback_steps` has to be a positive integer but is {callback_steps} of type"
@@ -347,11 +353,11 @@ class ValidationPipeline(DiffusionPipeline):
                 latents = torch.cat(latents, dim=0).to(device)
             else:
                 latents = torch.randn(shape, generator=generator, device=rand_device, dtype=dtype).to(device)
-        else:
-            if latents.shape != shape:
-                raise ValueError(f"Unexpected latents shape, got {latents.shape}, expected {shape}")
+        elif latents.shape == shape:
             latents = latents.to(device)
 
+        else:
+            raise ValueError(f"Unexpected latents shape, got {latents.shape}, expected {shape}")
         # scale the initial noise by the standard deviation required by the scheduler
         latents = latents * self.scheduler.init_noise_sigma
         return latents
@@ -425,9 +431,9 @@ class ValidationPipeline(DiffusionPipeline):
         )
         latents_dtype = latents.dtype
 
-        if use_image != False:
-            shape = (batch_size, num_channels_latents, video_length, height // self.vae_scale_factor, width // self.vae_scale_factor)
+        shape = (batch_size, num_channels_latents, video_length, height // self.vae_scale_factor, width // self.vae_scale_factor)
 
+        if use_image:
             image = Image.open(f'test_image/init_image{use_image}.png').convert('RGB')
             image = preprocess_image(image).to(device)
             if isinstance(generator, list):
@@ -450,7 +456,6 @@ class ValidationPipeline(DiffusionPipeline):
                 masked_image[:,:,f,:,:] = image_latent_padding.clone()
             mask         = mask.to(device)
         else:
-            shape = (batch_size, num_channels_latents, video_length, height // self.vae_scale_factor, width // self.vae_scale_factor)
             add_noise    = torch.zeros_like(latents).to(device)
             masked_image = add_noise
             mask         = torch.zeros((shape[0], 1, shape[2], shape[3], shape[4])).to(device)
@@ -498,7 +503,4 @@ class ValidationPipeline(DiffusionPipeline):
         if output_type == "tensor":
             video = torch.from_numpy(video)
 
-        if not return_dict:
-            return video
-
-        return AnimationPipelineOutput(videos=video)
+        return video if not return_dict else AnimationPipelineOutput(videos=video)

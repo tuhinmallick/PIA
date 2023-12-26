@@ -76,10 +76,10 @@ class Downsample3D(nn.Module):
         self.out_channels = out_channels or channels
         self.use_conv = use_conv
         self.padding = padding
-        stride = 2
         self.name = name
 
         if use_conv:
+            stride = 2
             self.conv = InflatedConv3d(self.channels, self.out_channels, 3, stride=stride, padding=padding)
         else:
             raise NotImplementedError
@@ -166,7 +166,7 @@ class ResnetBlock3D(nn.Module):
         hidden_states = self.nonlinearity(hidden_states)
 
         hidden_states = self.conv1(hidden_states)
-        
+
         if temb is not None:
             temb = self.time_emb_proj(self.nonlinearity(temb))[:, :, None, None, None]
 
@@ -187,9 +187,7 @@ class ResnetBlock3D(nn.Module):
         if self.conv_shortcut is not None:
             input_tensor = self.conv_shortcut(input_tensor)
 
-        output_tensor = (input_tensor + hidden_states) / self.output_scale_factor
-
-        return output_tensor
+        return (input_tensor + hidden_states) / self.output_scale_factor
 
 
 class Mish(torch.nn.Module):

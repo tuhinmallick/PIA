@@ -30,7 +30,8 @@ RANGE_LIST = [
 
 
 def zero_rank_print(s):
-    if (not dist.is_initialized()) or (dist.is_initialized() and dist.get_rank() == 0): print("### " + s)
+    if (not dist.is_initialized()) or (dist.is_initialized() and dist.get_rank() == 0):
+        print(f"### {s}")
 
 def save_videos_mp4(video: torch.Tensor, path: str, fps: int=8):
     video = rearrange(video, "b c t h w -> t b c h w")
@@ -77,9 +78,7 @@ def init_prompt(prompt, pipeline):
         return_tensors="pt",
     )
     text_embeddings = pipeline.text_encoder(text_input.input_ids.to(pipeline.device))[0]
-    context = torch.cat([uncond_embeddings, text_embeddings])
-
-    return context
+    return torch.cat([uncond_embeddings, text_embeddings])
 
 
 def next_step(model_output: Union[torch.FloatTensor, np.ndarray], timestep: int,
@@ -91,13 +90,11 @@ def next_step(model_output: Union[torch.FloatTensor, np.ndarray], timestep: int,
     beta_prod_t = 1 - alpha_prod_t
     next_original_sample = (sample - beta_prod_t ** 0.5 * model_output) / alpha_prod_t ** 0.5
     next_sample_direction = (1 - alpha_prod_t_next) ** 0.5 * model_output
-    next_sample = alpha_prod_t_next ** 0.5 * next_original_sample + next_sample_direction
-    return next_sample
+    return alpha_prod_t_next ** 0.5 * next_original_sample + next_sample_direction
 
 
 def get_noise_pred_single(latents, t, context, unet):
-    noise_pred = unet(latents, t, encoder_hidden_states=context)["sample"]
-    return noise_pred
+    return unet(latents, t, encoder_hidden_states=context)["sample"]
 
 
 @torch.no_grad()
@@ -116,8 +113,7 @@ def ddim_loop(pipeline, ddim_scheduler, latent, num_inv_steps, prompt):
 
 @torch.no_grad()
 def ddim_inversion(pipeline, ddim_scheduler, video_latent, num_inv_steps, prompt=""):
-    ddim_latents = ddim_loop(pipeline, ddim_scheduler, video_latent, num_inv_steps, prompt)
-    return ddim_latents
+    return ddim_loop(pipeline, ddim_scheduler, video_latent, num_inv_steps, prompt)
 
 def prepare_mask_coef(video_length:int, cond_frame:int, sim_range:list=[0.2, 1.0]):
 
@@ -155,9 +151,7 @@ def prepare_mask_coef_by_statistics(video_length: int, cond_frame: int, sim_rang
     coef = coef + ([coef[-1]] * (video_length - len(coef)))
 
     order = [abs(i - cond_frame) for i in range(video_length)]
-    coef  = [coef[order[i]] for i in range(video_length)]
-
-    return coef
+    return [coef[order[i]] for i in range(video_length)]
 
 
 def prepare_mask_coef_multi_cond(video_length:int, cond_frames:list, sim_range:list=[0.2, 1.0]):
@@ -174,9 +168,7 @@ def prepare_mask_coef_multi_cond(video_length:int, cond_frames:list, sim_range:l
     'video_length should be greater than cond_frame'
 
     if max(sim_range) == min(sim_range):
-        cond_coefs = [sim_range[0]] * video_length
-        return cond_coefs
-
+        return [sim_range[0]] * video_length
     cond_coefs = []
 
     for cond_frame in cond_frames:
@@ -219,9 +211,7 @@ def prepare_masked_latent_cond(video_length: int, cond_frames: list):
             if abs(nearest[f] - f) > abs(cond_frame - f):
                 nearest[f] = cond_frame
 
-    maked_latent_cond = nearest
-
-    return maked_latent_cond
+    return nearest
 
 def estimated_kernel_size(frame_width: int, frame_height: int) -> int:
     """Estimate kernel size based on video resolution."""
@@ -312,10 +302,7 @@ def preprocess_img(img_path, max_size:int=512):
     width, height = ori_image.size
 
     long_edge = max(width, height)
-    if long_edge > max_size:
-        scale_factor = max_size / long_edge
-    else:
-        scale_factor = 1
+    scale_factor = max_size / long_edge if long_edge > max_size else 1
     width = int(width * scale_factor)
     height = int(height * scale_factor)
     ori_image = ori_image.resize((width, height))

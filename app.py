@@ -58,10 +58,7 @@ def preprocess_img(img_np, max_size: int = 512):
     width, height = ori_image.size
 
     long_edge = max(width, height)
-    if long_edge > max_size:
-        scale_factor = max_size / long_edge
-    else:
-        scale_factor = 1
+    scale_factor = max_size / long_edge if long_edge > max_size else 1
     width = int(width * scale_factor)
     height = int(height * scale_factor)
     ori_image = ori_image.resize((width, height))
@@ -117,11 +114,11 @@ class AnimateController:
         if not file_list:
             return False
 
-        if not 'ip-adapter_sd15.bin' not in file_list:
+        if 'ip-adapter_sd15.bin' in file_list:
             print('Cannot find "ip-adapter_sd15.bin" '
                   f'under {self.ip_adapter_dir}')
             return False
-        if not 'image_encoder' not in file_list:
+        if 'image_encoder' in file_list:
             print(f'Cannot find "image_encoder" under {self.ip_adapter_dir}')
             return False
 
@@ -184,9 +181,9 @@ class AnimateController:
         progress=gr.Progress(),
     ):
         if not self.loaded:
-            raise gr.Error(f"Please load model first!")
+            raise gr.Error("Please load model first!")
 
-        if seed_textbox != -1 and seed_textbox != "":
+        if seed_textbox not in [-1, ""]:
             torch.manual_seed(int(seed_textbox))
         else:
             torch.seed()

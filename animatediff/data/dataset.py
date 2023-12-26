@@ -123,6 +123,11 @@ class WebVid10M(Dataset):
         #video_ = video_.astype(np.uint8)
         score  = get_score(video_, cond_frame_idx=cond_frames)
         del video_
-        sample = dict(pixel_values=video, text=name, score=score, cond_frames=cond_frames, vid=videoid)
-        return sample
+        return dict(
+            pixel_values=video,
+            text=name,
+            score=score,
+            cond_frames=cond_frames,
+            vid=videoid,
+        )
     
