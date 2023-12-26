@@ -5,9 +5,9 @@ from torchvision.transforms import RandomCrop, RandomResizedCrop
 
 def _is_tensor_video_clip(clip):
     if not torch.is_tensor(clip):
-        raise TypeError("clip should be Tensor. Got %s" % type(clip))
+        raise TypeError(f"clip should be Tensor. Got {type(clip)}")
 
-    if not clip.ndimension() == 4:
+    if clip.ndimension() != 4:
         raise ValueError("clip should be 4D. Got %dD" % clip.dim())
 
     return True
@@ -100,8 +100,10 @@ def to_tensor(clip):
         clip (torch.tensor, dtype=torch.float): Size is (T, C, H, W)
     """
     _is_tensor_video_clip(clip)
-    if not clip.dtype == torch.uint8:
-        raise TypeError("clip tensor should have data type uint8. Got %s" % str(clip.dtype))
+    if clip.dtype != torch.uint8:
+        raise TypeError(
+            f"clip tensor should have data type uint8. Got {str(clip.dtype)}"
+        )
     # return clip.float().permute(3, 0, 1, 2) / 255.0
     return clip.float() / 255.0
 
@@ -200,8 +202,7 @@ class UCFCenterCropVideo:
                 size is (T, C, crop_size, crop_size)
         """
         clip_resize = resize_scale(clip=clip, target_size=self.size, interpolation_mode=self.interpolation_mode)
-        clip_center_crop = center_crop(clip_resize, self.size)
-        return clip_center_crop
+        return center_crop(clip_resize, self.size)
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(size={self.size}, interpolation_mode={self.interpolation_mode}"
@@ -226,8 +227,7 @@ class KineticsRandomCropResizeVideo:
 
     def __call__(self, clip):
         clip_random_crop = random_shift_crop(clip)
-        clip_resize = resize(clip_random_crop, self.size, self.interpolation_mode)
-        return clip_resize
+        return resize(clip_random_crop, self.size, self.interpolation_mode)
 
 
 class CenterCropVideo:
@@ -254,8 +254,7 @@ class CenterCropVideo:
             torch.tensor: center cropped video clip.
                 size is (T, C, crop_size, crop_size)
         """
-        clip_center_crop = center_crop(clip, self.size)
-        return clip_center_crop
+        return center_crop(clip, self.size)
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(size={self.size}, interpolation_mode={self.interpolation_mode}"

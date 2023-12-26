@@ -170,11 +170,13 @@ class I2VPipeline(DiffusionPipeline, IPAdapterMixin, TextualInversionLoaderMixin
         old_weights = unet.conv_in.weight
         old_bias = unet.conv_in.bias
         new_conv1 = InflatedConv3d(
-            9, old_weights.shape[0],
+            9,
+            old_weights.shape[0],
             kernel_size=unet.conv_in.kernel_size,
             stride=unet.conv_in.stride,
             padding=unet.conv_in.padding,
-            bias=True if old_bias is not None else False)
+            bias=old_bias is not None,
+        )
         param = torch.zeros((320,5,3,3),requires_grad=True)
         new_conv1.weight = torch.nn.Parameter(torch.cat((old_weights,param),dim=1))
         if old_bias is not None:
@@ -220,11 +222,11 @@ class I2VPipeline(DiffusionPipeline, IPAdapterMixin, TextualInversionLoaderMixin
             need_strict = not (only_load_vae_decoder or only_load_vae_encoder)
             vae.load_state_dict(converted_vae_checkpoint, strict=need_strict)
             print('Prefix in loaded VAE checkpoint: ')
-            print(set([k.split('.')[0] for k in converted_vae_checkpoint.keys()]))
+            print({k.split('.')[0] for k in converted_vae_checkpoint.keys()})
 
-            # load text encoder
-            text_encoder_checkpoint = convert_ldm_clip_checkpoint(base_model_state_dict)
-            if text_encoder_checkpoint:
+            if text_encoder_checkpoint := convert_ldm_clip_checkpoint(
+                base_model_state_dict
+            ):
                 text_encoder.load_state_dict(text_encoder_checkpoint)
 
             print(" <<< Loaded DreamBooth        <<<")
@@ -248,7 +250,7 @@ class I2VPipeline(DiffusionPipeline, IPAdapterMixin, TextualInversionLoaderMixin
                 only_decoder=only_load_vae_decoder,
                 only_encoder=only_load_vae_encoder,)
             print('Prefix in loaded VAE checkpoint: ')
-            print(set([k.split('.')[0] for k in converted_vae_checkpoint.keys()]))
+            print({k.split('.')[0] for k in converted_vae_checkpoint.keys()})
             need_strict = not (only_load_vae_decoder or only_load_vae_encoder)
             vae.load_state_dict(converted_vae_checkpoint, strict=need_strict)
             print(" <<< Loaded VAE        <<<")
@@ -292,10 +294,7 @@ class I2VPipeline(DiffusionPipeline, IPAdapterMixin, TextualInversionLoaderMixin
         if ip_adapter_path and ip_adapter_scale > 0:
             ip_adapter_name = 'ip-adapter_sd15.bin'
             # only online repo need subfolder
-            if not osp.isdir(ip_adapter_path):
-                subfolder = 'models'
-            else:
-                subfolder = ''
+            subfolder = 'models' if not osp.isdir(ip_adapter_path) else ''
             pipeline.load_ip_adapter(ip_adapter_path, subfolder, ip_adapter_name)
             pipeline.set_ip_adapter_scale(ip_adapter_scale)
             pipeline.use_ip_adapter = True
@@ -329,14 +328,18 @@ class I2VPipeline(DiffusionPipeline, IPAdapterMixin, TextualInversionLoaderMixin
     def _execution_device(self):
         if self.device != torch.device("meta") or not hasattr(self.unet, "_hf_hook"):
             return self.device
-        for module in self.unet.modules():
-            if (
-                hasattr(module, "_hf_hook")
-                and hasattr(module._hf_hook, "execution_device")
-                and module._hf_hook.execution_device is not None
-            ):
-                return torch.device(module._hf_hook.execution_device)
-        return self.device
+        return next(
+            (
+                torch.device(module._hf_hook.execution_device)
+                for module in self.unet.modules()
+                if (
+                    hasattr(module, "_hf_hook")
+                    and hasattr(module._hf_hook, "execution_device")
+                    and module._hf_hook.execution_device is not None
+                )
+            ),
+            self.device,
+        )
 
     def _encode_prompt(self, prompt, device, num_videos_per_prompt, do_classifier_free_guidance, negative_prompt):
         batch_size = len(prompt) if isinstance(prompt, list) else 1
@@ -431,10 +434,10 @@ class I2VPipeline(DiffusionPipeline, IPAdapterMixin, TextualInversionLoaderMixin
         video_length = latents.shape[2]
         latents = 1 / 0.18215 * latents
         latents = rearrange(latents, "b c f h w -> (b f) c h w")
-        # video = self.vae.decode(latents).sample
-        video = []
-        for frame_idx in tqdm(range(latents.shape[0])):
-            video.append(self.vae.decode(latents[frame_idx:frame_idx+1]).sample)
+        video = [
+            self.vae.decode(latents[frame_idx : frame_idx + 1]).sample
+            for frame_idx in tqdm(range(latents.shape[0]))
+        ]
         video = torch.cat(video)
         video = rearrange(video, "(b f) c h w -> b c f h w", f=video_length)
         video = (video / 2 + 0.5).clamp(0, 1)
@@ -466,8 +469,10 @@ class I2VPipeline(DiffusionPipeline, IPAdapterMixin, TextualInversionLoaderMixin
         if height % 8 != 0 or width % 8 != 0:
             raise ValueError(f"`height` and `width` have to be divisible by 8 but are {height} and {width}.")
 
-        if (callback_steps is None) or (
-            callback_steps is not None and (not isinstance(callback_steps, int) or callback_steps <= 0)
+        if (
+            callback_steps is None
+            or not isinstance(callback_steps, int)
+            or callback_steps <= 0
         ):
             raise ValueError(
                 f"`callback_steps` has to be a positive integer but is {callback_steps} of type"
@@ -504,11 +509,11 @@ class I2VPipeline(DiffusionPipeline, IPAdapterMixin, TextualInversionLoaderMixin
                 latents = torch.cat(latents, dim=0).to(device)
             else:
                 latents = torch.randn(shape, generator=generator, device=rand_device, dtype=dtype).to(device)
-        else:
-            if latents.shape != shape:
-                raise ValueError(f"Unexpected latents shape, got {latents.shape}, expected {shape}")
+        elif latents.shape == shape:
             latents = latents.to(device)
 
+        else:
+            raise ValueError(f"Unexpected latents shape, got {latents.shape}, expected {shape}")
         return latents
 
     def encode_image(self, image, device, num_images_per_prompt):
@@ -710,7 +715,4 @@ class I2VPipeline(DiffusionPipeline, IPAdapterMixin, TextualInversionLoaderMixin
         if output_type == "tensor":
             video = torch.from_numpy(video)
 
-        if not return_dict:
-            return video
-
-        return AnimationPipelineOutput(videos=video)
+        return video if not return_dict else AnimationPipelineOutput(videos=video)

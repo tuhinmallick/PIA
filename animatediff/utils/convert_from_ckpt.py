@@ -106,16 +106,7 @@ def renew_attention_paths(old_list, n_shave_prefix_segments=0):
     for old_item in old_list:
         new_item = old_item
 
-        #         new_item = new_item.replace('norm.weight', 'group_norm.weight')
-        #         new_item = new_item.replace('norm.bias', 'group_norm.bias')
-
-        #         new_item = new_item.replace('proj_out.weight', 'proj_attn.weight')
-        #         new_item = new_item.replace('proj_out.bias', 'proj_attn.bias')
-
-        #         new_item = shave_segments(new_item, n_shave_prefix_segments=n_shave_prefix_segments)
-
-        mapping.append({"old": old_item, "new": new_item})
-
+        mapping.append({"old": new_item, "new": new_item})
     return mapping
 
 
@@ -197,7 +188,7 @@ def assign_to_checkpoint(
             checkpoint[new_path] = old_checkpoint[path["old"]][:, :, 0]
         elif 'to_out.0.weight' in new_path:
             checkpoint[new_path] = old_checkpoint[path['old']].squeeze()
-        elif any([qkv in new_path for qkv in ['to_q', 'to_k', 'to_v']]):
+        elif any(qkv in new_path for qkv in ['to_q', 'to_k', 'to_v']):
             checkpoint[new_path] = old_checkpoint[path['old']].squeeze()
         else:
             checkpoint[new_path] = old_checkpoint[path["old"]]
@@ -237,7 +228,7 @@ def create_unet_diffusers_config(original_config, image_size: int, controlnet=Fa
             resolution *= 2
 
     up_block_types = []
-    for i in range(len(block_out_channels)):
+    for _ in block_out_channels:
         block_type = "CrossAttnUpBlock2D" if resolution in unet_params.attention_resolutions else "UpBlock2D"
         up_block_types.append(block_type)
         resolution //= 2
@@ -257,13 +248,12 @@ def create_unet_diffusers_config(original_config, image_size: int, controlnet=Fa
     projection_class_embeddings_input_dim = None
 
     if "num_classes" in unet_params:
-        if unet_params.num_classes == "sequential":
-            class_embed_type = "projection"
-            assert "adm_in_channels" in unet_params
-            projection_class_embeddings_input_dim = unet_params.adm_in_channels
-        else:
+        if unet_params.num_classes != "sequential":
             raise NotImplementedError(f"Unknown conditional unet num_classes config: {unet_params.num_classes}")
 
+        class_embed_type = "projection"
+        assert "adm_in_channels" in unet_params
+        projection_class_embeddings_input_dim = unet_params.adm_in_channels
     config = {
         "sample_size": image_size // vae_scale_factor,
         "in_channels": unet_params.in_channels,
@@ -295,7 +285,7 @@ def create_vae_diffusers_config(original_config, image_size: int):
     down_block_types = ["DownEncoderBlock2D"] * len(block_out_channels)
     up_block_types = ["UpDecoderBlock2D"] * len(block_out_channels)
 
-    config = {
+    return {
         "sample_size": image_size,
         "in_channels": vae_params.in_channels,
         "out_channels": vae_params.out_ch,
@@ -305,27 +295,24 @@ def create_vae_diffusers_config(original_config, image_size: int):
         "latent_channels": vae_params.z_channels,
         "layers_per_block": vae_params.num_res_blocks,
     }
-    return config
 
 
 def create_diffusers_schedular(original_config):
-    schedular = DDIMScheduler(
+    return DDIMScheduler(
         num_train_timesteps=original_config.model.params.timesteps,
         beta_start=original_config.model.params.linear_start,
         beta_end=original_config.model.params.linear_end,
         beta_schedule="scaled_linear",
     )
-    return schedular
 
 
 def create_ldm_bert_config(original_config):
     bert_params = original_config.model.parms.cond_stage_config.params
-    config = LDMBertConfig(
+    return LDMBertConfig(
         d_model=bert_params.n_embed,
         encoder_layers=bert_params.n_layer,
         encoder_ffn_dim=bert_params.n_embed * 4,
     )
-    return config
 
 
 def convert_ldm_unet_checkpoint(checkpoint, config, path=None, extract_ema=False, controlnet=False):
@@ -337,11 +324,7 @@ def convert_ldm_unet_checkpoint(checkpoint, config, path=None, extract_ema=False
     unet_state_dict = {}
     keys = list(checkpoint.keys())
 
-    if controlnet:
-        unet_key = "control_model."
-    else:
-        unet_key = "model.diffusion_model."
-
+    unet_key = "control_model." if controlnet else "model.diffusion_model."
     # at least a 100 parameters have to start with `model_ema` in order for the checkpoint to be EMA
     if sum(k.startswith("model_ema") for k in keys) > 100 and extract_ema:
         print(f"Checkpoint {path} has both EMA and non-EMA weights.")
@@ -364,17 +347,21 @@ def convert_ldm_unet_checkpoint(checkpoint, config, path=None, extract_ema=False
             if key.startswith(unet_key):
                 unet_state_dict[key.replace(unet_key, "")] = checkpoint.pop(key)
 
-    new_checkpoint = {}
-
-    new_checkpoint["time_embedding.linear_1.weight"] = unet_state_dict["time_embed.0.weight"]
-    new_checkpoint["time_embedding.linear_1.bias"] = unet_state_dict["time_embed.0.bias"]
-    new_checkpoint["time_embedding.linear_2.weight"] = unet_state_dict["time_embed.2.weight"]
-    new_checkpoint["time_embedding.linear_2.bias"] = unet_state_dict["time_embed.2.bias"]
+    new_checkpoint = {
+        "time_embedding.linear_1.weight": unet_state_dict[
+            "time_embed.0.weight"
+        ],
+        "time_embedding.linear_1.bias": unet_state_dict["time_embed.0.bias"],
+        "time_embedding.linear_2.weight": unet_state_dict[
+            "time_embed.2.weight"
+        ],
+        "time_embedding.linear_2.bias": unet_state_dict["time_embed.2.bias"],
+    }
 
     if config["class_embed_type"] is None:
         # No parameters to port
         ...
-    elif config["class_embed_type"] == "timestep" or config["class_embed_type"] == "projection":
+    elif config["class_embed_type"] in ["timestep", "projection"]:
         new_checkpoint["class_embedding.linear_1.weight"] = unet_state_dict["label_emb.0.0.weight"]
         new_checkpoint["class_embedding.linear_1.bias"] = unet_state_dict["label_emb.0.0.bias"]
         new_checkpoint["class_embedding.linear_2.weight"] = unet_state_dict["label_emb.0.2.weight"]
@@ -528,16 +515,13 @@ def convert_ldm_unet_checkpoint(checkpoint, config, path=None, extract_ema=False
 
         orig_index += 2
 
-        diffusers_index = 0
-
-        while diffusers_index < 6:
+        for diffusers_index in range(6):
             new_checkpoint[f"controlnet_cond_embedding.blocks.{diffusers_index}.weight"] = unet_state_dict.pop(
                 f"input_hint_block.{orig_index}.weight"
             )
             new_checkpoint[f"controlnet_cond_embedding.blocks.{diffusers_index}.bias"] = unet_state_dict.pop(
                 f"input_hint_block.{orig_index}.bias"
             )
-            diffusers_index += 1
             orig_index += 2
 
         new_checkpoint["controlnet_cond_embedding.conv_out.weight"] = unet_state_dict.pop(
@@ -560,34 +544,35 @@ def convert_ldm_unet_checkpoint(checkpoint, config, path=None, extract_ema=False
 
 
 def convert_ldm_vae_checkpoint(checkpoint, config, only_decoder=False, only_encoder=False):
-    # extract state dict for VAE
-    vae_state_dict = {}
     vae_key = "first_stage_model."
     keys = list(checkpoint.keys())
-    for key in keys:
-        if key.startswith(vae_key):
-            vae_state_dict[key.replace(vae_key, "")] = checkpoint.get(key)
-
-    new_checkpoint = {}
-
-    new_checkpoint["encoder.conv_in.weight"] = vae_state_dict["encoder.conv_in.weight"]
-    new_checkpoint["encoder.conv_in.bias"] = vae_state_dict["encoder.conv_in.bias"]
-    new_checkpoint["encoder.conv_out.weight"] = vae_state_dict["encoder.conv_out.weight"]
-    new_checkpoint["encoder.conv_out.bias"] = vae_state_dict["encoder.conv_out.bias"]
-    new_checkpoint["encoder.conv_norm_out.weight"] = vae_state_dict["encoder.norm_out.weight"]
-    new_checkpoint["encoder.conv_norm_out.bias"] = vae_state_dict["encoder.norm_out.bias"]
-
-    new_checkpoint["decoder.conv_in.weight"] = vae_state_dict["decoder.conv_in.weight"]
-    new_checkpoint["decoder.conv_in.bias"] = vae_state_dict["decoder.conv_in.bias"]
-    new_checkpoint["decoder.conv_out.weight"] = vae_state_dict["decoder.conv_out.weight"]
-    new_checkpoint["decoder.conv_out.bias"] = vae_state_dict["decoder.conv_out.bias"]
-    new_checkpoint["decoder.conv_norm_out.weight"] = vae_state_dict["decoder.norm_out.weight"]
-    new_checkpoint["decoder.conv_norm_out.bias"] = vae_state_dict["decoder.norm_out.bias"]
-
-    new_checkpoint["quant_conv.weight"] = vae_state_dict["quant_conv.weight"]
-    new_checkpoint["quant_conv.bias"] = vae_state_dict["quant_conv.bias"]
-    new_checkpoint["post_quant_conv.weight"] = vae_state_dict["post_quant_conv.weight"]
-    new_checkpoint["post_quant_conv.bias"] = vae_state_dict["post_quant_conv.bias"]
+    vae_state_dict = {
+        key.replace(vae_key, ""): checkpoint.get(key)
+        for key in keys
+        if key.startswith(vae_key)
+    }
+    new_checkpoint = {
+        "encoder.conv_in.weight": vae_state_dict["encoder.conv_in.weight"],
+        "encoder.conv_in.bias": vae_state_dict["encoder.conv_in.bias"],
+        "encoder.conv_out.weight": vae_state_dict["encoder.conv_out.weight"],
+        "encoder.conv_out.bias": vae_state_dict["encoder.conv_out.bias"],
+        "encoder.conv_norm_out.weight": vae_state_dict[
+            "encoder.norm_out.weight"
+        ],
+        "encoder.conv_norm_out.bias": vae_state_dict["encoder.norm_out.bias"],
+        "decoder.conv_in.weight": vae_state_dict["decoder.conv_in.weight"],
+        "decoder.conv_in.bias": vae_state_dict["decoder.conv_in.bias"],
+        "decoder.conv_out.weight": vae_state_dict["decoder.conv_out.weight"],
+        "decoder.conv_out.bias": vae_state_dict["decoder.conv_out.bias"],
+        "decoder.conv_norm_out.weight": vae_state_dict[
+            "decoder.norm_out.weight"
+        ],
+        "decoder.conv_norm_out.bias": vae_state_dict["decoder.norm_out.bias"],
+        "quant_conv.weight": vae_state_dict["quant_conv.weight"],
+        "quant_conv.bias": vae_state_dict["quant_conv.bias"],
+        "post_quant_conv.weight": vae_state_dict["post_quant_conv.weight"],
+        "post_quant_conv.bias": vae_state_dict["post_quant_conv.bias"],
+    }
 
     # Retrieves the keys for the encoder down blocks only
     num_down_blocks = len({".".join(layer.split(".")[:3]) for layer in vae_state_dict if "encoder.down" in layer})
@@ -725,12 +710,11 @@ def convert_ldm_bert_checkpoint(checkpoint, config):
 def convert_ldm_clip_checkpoint(checkpoint):
     keys = list(checkpoint.keys())
 
-    text_model_dict = {}
-    for key in keys:
-        if key.startswith("cond_stage_model.transformer"):
-            text_model_dict[key[len("cond_stage_model.transformer.") :]] = checkpoint[key]
-
-    return text_model_dict
+    return {
+        key[len("cond_stage_model.transformer.") :]: checkpoint[key]
+        for key in keys
+        if key.startswith("cond_stage_model.transformer")
+    }
 
 
 textenc_conversion_lst = [
@@ -763,12 +747,11 @@ def convert_paint_by_example_checkpoint(checkpoint):
 
     keys = list(checkpoint.keys())
 
-    text_model_dict = {}
-
-    for key in keys:
-        if key.startswith("cond_stage_model.transformer"):
-            text_model_dict[key[len("cond_stage_model.transformer.") :]] = checkpoint[key]
-
+    text_model_dict = {
+        key[len("cond_stage_model.transformer.") :]: checkpoint[key]
+        for key in keys
+        if key.startswith("cond_stage_model.transformer")
+    }
     # load clip vision
     model.model.load_state_dict(text_model_dict)
 
@@ -829,15 +812,16 @@ def convert_open_clip_checkpoint(checkpoint):
 
     keys = list(checkpoint.keys())
 
-    text_model_dict = {}
-
     if "cond_stage_model.model.text_projection" in checkpoint:
         d_model = int(checkpoint["cond_stage_model.model.text_projection"].shape[0])
     else:
         d_model = 1024
 
-    text_model_dict["text_model.embeddings.position_ids"] = text_model.text_model.embeddings.get_buffer("position_ids")
-
+    text_model_dict = {
+        "text_model.embeddings.position_ids": text_model.text_model.embeddings.get_buffer(
+            "position_ids"
+        )
+    }
     for key in keys:
         if "resblocks.23" in key:  # Diffusers drops the final layer and only uses the penultimate layer
             continue
@@ -848,15 +832,19 @@ def convert_open_clip_checkpoint(checkpoint):
             if new_key.endswith(".in_proj_weight"):
                 new_key = new_key[: -len(".in_proj_weight")]
                 new_key = textenc_pattern.sub(lambda m: protected[re.escape(m.group(0))], new_key)
-                text_model_dict[new_key + ".q_proj.weight"] = checkpoint[key][:d_model, :]
-                text_model_dict[new_key + ".k_proj.weight"] = checkpoint[key][d_model : d_model * 2, :]
-                text_model_dict[new_key + ".v_proj.weight"] = checkpoint[key][d_model * 2 :, :]
+                text_model_dict[f"{new_key}.q_proj.weight"] = checkpoint[key][:d_model, :]
+                text_model_dict[f"{new_key}.k_proj.weight"] = checkpoint[key][
+                    d_model : d_model * 2, :
+                ]
+                text_model_dict[f"{new_key}.v_proj.weight"] = checkpoint[key][d_model * 2 :, :]
             elif new_key.endswith(".in_proj_bias"):
                 new_key = new_key[: -len(".in_proj_bias")]
                 new_key = textenc_pattern.sub(lambda m: protected[re.escape(m.group(0))], new_key)
-                text_model_dict[new_key + ".q_proj.bias"] = checkpoint[key][:d_model]
-                text_model_dict[new_key + ".k_proj.bias"] = checkpoint[key][d_model : d_model * 2]
-                text_model_dict[new_key + ".v_proj.bias"] = checkpoint[key][d_model * 2 :]
+                text_model_dict[f"{new_key}.q_proj.bias"] = checkpoint[key][:d_model]
+                text_model_dict[f"{new_key}.k_proj.bias"] = checkpoint[key][
+                    d_model : d_model * 2
+                ]
+                text_model_dict[f"{new_key}.v_proj.bias"] = checkpoint[key][d_model * 2 :]
             else:
                 new_key = textenc_pattern.sub(lambda m: protected[re.escape(m.group(0))], new_key)
 
@@ -883,12 +871,11 @@ def stable_unclip_image_encoder(original_config):
     if sd_clip_image_embedder_class == "ClipImageEmbedder":
         clip_model_name = image_embedder_config.params.model
 
-        if clip_model_name == "ViT-L/14":
-            feature_extractor = CLIPImageProcessor()
-            image_encoder = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-large-patch14")
-        else:
+        if clip_model_name != "ViT-L/14":
             raise NotImplementedError(f"Unknown CLIP checkpoint name in stable diffusion checkpoint {clip_model_name}")
 
+        feature_extractor = CLIPImageProcessor()
+        image_encoder = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-large-patch14")
     elif sd_clip_image_embedder_class == "FrozenOpenCLIPImageEmbedder":
         feature_extractor = CLIPImageProcessor()
         image_encoder = CLIPVisionModelWithProjection.from_pretrained("laion/CLIP-ViT-H-14-laion2B-s32B-b79K")
@@ -916,32 +903,31 @@ def stable_unclip_image_noising_components(
     noise_aug_class = noise_aug_config.target
     noise_aug_class = noise_aug_class.split(".")[-1]
 
-    if noise_aug_class == "CLIPEmbeddingNoiseAugmentation":
-        noise_aug_config = noise_aug_config.params
-        embedding_dim = noise_aug_config.timestep_dim
-        max_noise_level = noise_aug_config.noise_schedule_config.timesteps
-        beta_schedule = noise_aug_config.noise_schedule_config.beta_schedule
-
-        image_normalizer = StableUnCLIPImageNormalizer(embedding_dim=embedding_dim)
-        image_noising_scheduler = DDPMScheduler(num_train_timesteps=max_noise_level, beta_schedule=beta_schedule)
-
-        if "clip_stats_path" in noise_aug_config:
-            if clip_stats_path is None:
-                raise ValueError("This stable unclip config requires a `clip_stats_path`")
-
-            clip_mean, clip_std = torch.load(clip_stats_path, map_location=device)
-            clip_mean = clip_mean[None, :]
-            clip_std = clip_std[None, :]
-
-            clip_stats_state_dict = {
-                "mean": clip_mean,
-                "std": clip_std,
-            }
-
-            image_normalizer.load_state_dict(clip_stats_state_dict)
-    else:
+    if noise_aug_class != "CLIPEmbeddingNoiseAugmentation":
         raise NotImplementedError(f"Unknown noise augmentor class: {noise_aug_class}")
 
+    noise_aug_config = noise_aug_config.params
+    embedding_dim = noise_aug_config.timestep_dim
+    max_noise_level = noise_aug_config.noise_schedule_config.timesteps
+    beta_schedule = noise_aug_config.noise_schedule_config.beta_schedule
+
+    image_normalizer = StableUnCLIPImageNormalizer(embedding_dim=embedding_dim)
+    image_noising_scheduler = DDPMScheduler(num_train_timesteps=max_noise_level, beta_schedule=beta_schedule)
+
+    if "clip_stats_path" in noise_aug_config:
+        if clip_stats_path is None:
+            raise ValueError("This stable unclip config requires a `clip_stats_path`")
+
+        clip_mean, clip_std = torch.load(clip_stats_path, map_location=device)
+        clip_mean = clip_mean[None, :]
+        clip_std = clip_std[None, :]
+
+        clip_stats_state_dict = {
+            "mean": clip_mean,
+            "std": clip_std,
+        }
+
+        image_normalizer.load_state_dict(clip_stats_state_dict)
     return image_normalizer, image_noising_scheduler
 
 

@@ -42,10 +42,14 @@ def convert_lora(pipeline, state_dict, LORA_PREFIX_UNET="lora_unet", LORA_PREFIX
             continue
 
         if "text" in key:
-            layer_infos = key.split(".")[0].split(LORA_PREFIX_TEXT_ENCODER + "_")[-1].split("_")
+            layer_infos = (
+                key.split(".")[0]
+                .split(f"{LORA_PREFIX_TEXT_ENCODER}_")[-1]
+                .split("_")
+            )
             curr_layer = pipeline.text_encoder
         else:
-            layer_infos = key.split(".")[0].split(LORA_PREFIX_UNET + "_")[-1].split("_")
+            layer_infos = key.split(".")[0].split(f"{LORA_PREFIX_UNET}_")[-1].split("_")
             curr_layer = pipeline.unet
 
         # find the target layer
@@ -59,18 +63,15 @@ def convert_lora(pipeline, state_dict, LORA_PREFIX_UNET="lora_unet", LORA_PREFIX
                     break
             except Exception:
                 if len(temp_name) > 0:
-                    temp_name += "_" + layer_infos.pop(0)
+                    temp_name += f"_{layer_infos.pop(0)}"
                 else:
                     temp_name = layer_infos.pop(0)
 
         pair_keys = []
         if "lora_down" in key:
-            pair_keys.append(key.replace("lora_down", "lora_up"))
-            pair_keys.append(key)
+            pair_keys.extend((key.replace("lora_down", "lora_up"), key))
         else:
-            pair_keys.append(key)
-            pair_keys.append(key.replace("lora_up", "lora_down"))
-
+            pair_keys.extend((key, key.replace("lora_up", "lora_down")))
         # update weight
         if len(state_dict[pair_keys[0]].shape) == 4:
             weight_up = state_dict[pair_keys[0]].squeeze(3).squeeze(2).to(torch.float32)
@@ -82,9 +83,7 @@ def convert_lora(pipeline, state_dict, LORA_PREFIX_UNET="lora_unet", LORA_PREFIX
             curr_layer.weight.data += alpha * torch.mm(weight_up, weight_down).to(curr_layer.weight.data.device)
 
         # update visited list
-        for item in pair_keys:
-            visited.append(item)
-
+        visited.extend(iter(pair_keys))
     return pipeline
 
 
@@ -104,12 +103,16 @@ def convert_lora_model_level(state_dict, unet, text_encoder=None, LORA_PREFIX_UN
             continue
 
         if "text" in key:
-            layer_infos = key.split(".")[0].split(LORA_PREFIX_TEXT_ENCODER + "_")[-1].split("_")
+            layer_infos = (
+                key.split(".")[0]
+                .split(f"{LORA_PREFIX_TEXT_ENCODER}_")[-1]
+                .split("_")
+            )
             assert text_encoder is not None, (
                 'text_encoder must be passed since lora contains text encoder layers')
             curr_layer = text_encoder
         else:
-            layer_infos = key.split(".")[0].split(LORA_PREFIX_UNET + "_")[-1].split("_")
+            layer_infos = key.split(".")[0].split(f"{LORA_PREFIX_UNET}_")[-1].split("_")
             curr_layer = unet
 
         # find the target layer
@@ -123,18 +126,15 @@ def convert_lora_model_level(state_dict, unet, text_encoder=None, LORA_PREFIX_UN
                     break
             except Exception:
                 if len(temp_name) > 0:
-                    temp_name += "_" + layer_infos.pop(0)
+                    temp_name += f"_{layer_infos.pop(0)}"
                 else:
                     temp_name = layer_infos.pop(0)
 
         pair_keys = []
         if "lora_down" in key:
-            pair_keys.append(key.replace("lora_down", "lora_up"))
-            pair_keys.append(key)
+            pair_keys.extend((key.replace("lora_down", "lora_up"), key))
         else:
-            pair_keys.append(key)
-            pair_keys.append(key.replace("lora_up", "lora_down"))
-
+            pair_keys.extend((key, key.replace("lora_up", "lora_down")))
         # update weight
         # NOTE: load lycon, meybe have bugs :(
         if 'conv_in' in pair_keys[0]:
@@ -142,7 +142,7 @@ def convert_lora_model_level(state_dict, unet, text_encoder=None, LORA_PREFIX_UN
             weight_down = state_dict[pair_keys[1]].to(torch.float32)
             weight_up = weight_up.view(weight_up.size(0), -1)
             weight_down = weight_down.view(weight_down.size(0), -1)
-            shape = [e for e in curr_layer.weight.data.shape]
+            shape = list(curr_layer.weight.data.shape)
             shape[1] = 4
             curr_layer.weight.data[:, :4, ...] += alpha * (weight_up @ weight_down).view(*shape)
         elif 'conv' in pair_keys[0]:
@@ -150,7 +150,7 @@ def convert_lora_model_level(state_dict, unet, text_encoder=None, LORA_PREFIX_UN
             weight_down = state_dict[pair_keys[1]].to(torch.float32)
             weight_up = weight_up.view(weight_up.size(0), -1)
             weight_down = weight_down.view(weight_down.size(0), -1)
-            shape = [e for e in curr_layer.weight.data.shape]
+            shape = list(curr_layer.weight.data.shape)
             curr_layer.weight.data += alpha * (weight_up @ weight_down).view(*shape)
         elif len(state_dict[pair_keys[0]].shape) == 4:
             weight_up = state_dict[pair_keys[0]].squeeze(3).squeeze(2).to(torch.float32)
@@ -162,9 +162,7 @@ def convert_lora_model_level(state_dict, unet, text_encoder=None, LORA_PREFIX_UN
             curr_layer.weight.data += alpha * torch.mm(weight_up, weight_down).to(curr_layer.weight.data.device)
 
         # update visited list
-        for item in pair_keys:
-            visited.append(item)
-
+        visited.extend(iter(pair_keys))
     return unet, text_encoder
 
 

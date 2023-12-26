@@ -93,23 +93,21 @@ if __name__ == '__main__':
     elif os.path.exists(os.path.join(img_root, f'{input_name}.png')):
         image_name = os.path.join(img_root, f'{input_name}.png')
     else:
-        raise ValueError(f"image_name should be .jpg or .png")
+        raise ValueError("image_name should be .jpg or .png")
     # image = np.array(Image.open(image_name))
     image, gen_height, gen_width  = preprocess_img(image_name)
     config.generate.sample_height = gen_height
     config.generate.sample_width  = gen_width
 
+    image_path = ''
     for sim_range in sim_ranges:
         print(f"using sim_range : {sim_range}")
         config.validation_data.mask_sim_range = sim_range
-        prompt_num = 0
         for prompt, n_prompt in zip(config.prompts, config.n_prompt):
             print(f"using n_prompt  : {n_prompt}")
-            prompt_num     += 1
             for single_prompt in prompt:
                 print(f" >>> Begin test {global_inf_num} >>>")
                 global_inf_num += 1
-                image_path = ''
                 sample = validation_pipeline(
                     image=image,
                                 prompt=single_prompt,
@@ -122,6 +120,6 @@ if __name__ == '__main__':
                                 mask_sim_template_idx = config.validation_data.mask_sim_range,
                                 **config.validation_data,
                             ).videos
-                save_videos_grid(sample, target_dir + f"{global_inf_num}_sim_{sim_range}.gif")
+                save_videos_grid(sample, f"{target_dir}{global_inf_num}_sim_{sim_range}.gif")
                 print(f" <<< test {global_inf_num} Done <<<")
     print(" <<< Test Done <<<")
